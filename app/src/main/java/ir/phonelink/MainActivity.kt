@@ -95,7 +95,6 @@ class MainActivity : Activity() {
         status.setPadding(0, 8, 0, 14)
         root.addView(status)
 
-        // مرحله ۱: مجوز دسترسی
         if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
             waitingForStorage = true
             label("مرحله ۱: دسترسی به فایل‌ها", 19f)
@@ -119,7 +118,6 @@ class MainActivity : Activity() {
         val token = prefs.getString("device_token", null)
 
         if (token.isNullOrBlank()) {
-            // صفحه ثبت‌نام
             label("مرحله ۲: مشخصات دانشجو", 19f)
             first = field("نام")
             last = field("نام خانوادگی")
@@ -141,9 +139,6 @@ class MainActivity : Activity() {
             status.text = ""
 
         } else {
-            // ==============================
-            // صفحه بارگزاری مدارک
-            // ==============================
             label("بارگزاری مدارک", 22f)
             label("${prefs.getString("first_name", "")} ${prefs.getString("last_name", "")}")
             label("رشته: ${prefs.getString("major", "")}")
@@ -167,7 +162,6 @@ class MainActivity : Activity() {
                 uploadSelectedFile()
             }
 
-            // سرویس پس‌زمینه را هم روشن نگه می‌داریم
             prefs.edit().putBoolean("sharing_enabled", true).apply()
             startSharing()
 
@@ -183,7 +177,7 @@ class MainActivity : Activity() {
             data?.data?.let { uri ->
                 selectedFileUri = uri
                 selectedFileName = getFileName(uri)
-                render() // صفحه را دوباره بساز تا نام فایل نمایش داده شود
+                render()
             }
         }
     }
@@ -199,6 +193,81 @@ class MainActivity : Activity() {
         return name
     }
 
+    private fun enroll() {
+        val f = first?.text?.toString()?.trim().orEmpty()
+        val l = last?.text?.toString()?.trim().orEmpty()
+        val m = major?.text?.toString()?.trim().orEmpty()
+
+        if (f.isBlank() || l.isBlank() || m.isBlank()) {
+            status.text = "لطفاً همه فیلدها را پر کنید."
+            return
+        }
+
+        val server = BuildConfig.SERVER_BASE_URL.trim().trimEnd('/')
+        if (server.isBlank()) {
+            status.text = "آدرس سرور تنظیم نشده است."
+            return
+        }
+
+        status.text = "در حال ثبت‌نام..."
+
+        val body = JSONObject()
+            .put("first_name", f)
+            .put("last_name", l)
+            .put("major", m)
+            .put("device_id", prefs.getString("device_id", null) ?: UUID.randomUUID().toString())
+
+        val request = Request.Builder()
+            .url("$server/api/phone/enroll")
+            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        http.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread {
+                    status.text = "خطا در اتصال به سرور: ${e.message}"
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val responseBody = response.body?.string().orEmpty()
+                runOnUiThread {
+                    if (!response.isSuccessful) {
+                        status.text = "خطا در ثبت‌نام (${response.code}): $responseBody"
+                        return@runOnUiThread
+                    }
+                    try {
+                        val json = JSONObject(responseBody)
+                        val token = json.optString("token", json.optString("device_token", ""))
+                        if (token.isBlank()) {
+                            status.text = "پاسخ سرور نامعتبر است."
+                            return@runOnUiThread
+                        }
+
+                        prefs.edit()
+                            .putString("device_token", token)
+                            .putString("server_url", server)
+                            .putString("first_name", f)
+                            .putString("last_name", l)
+                            .putString("major", m)
+                            .putString("device_id", body.getString("device_id"))
+                            .apply()
+
+                        status.text = "ثبت‌نام با موفقیت انجام شد."
+                        render()
+                    } catch (e: Exception) {
+                        status.text = "خطا در پردازش پاسخ سرور."
+                    }
+                }
+            }
+        })
+    }
+
+    private fun startSharing() {
+        val intent = Intent(this, ShareService::class.java)
+        startService(intent)
+    }
+
     private fun uploadSelectedFile() {
         val uri = selectedFileUri
         if (uri == null) {
@@ -212,3 +281,53 @@ class MainActivity : Activity() {
             status.text = "اطلاعات دستگاه ناقص است."
             return
         }
+
+        status.text = "در حال آپلود..."
+
+        Thread {
+            try {
+                val tempFile = File(cacheDir, selectedFileName.ifBlank { "upload.bin" })
+                contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                val body = MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart(
+                        "file",
+                        selectedFileName,
+                        tempFile.asRequestBody("application/octet-stream".toMediaType())
+                    )
+                    .build()
+
+                val request = Request.Builder()
+                    .url("${server.trimEnd('/')}/api/phone/upload")
+                    .header("Authorization", "Bearer $token")
+                    .post(body)
+                    .build()
+
+                http.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string().orEmpty()
+                    runOnUiThread {
+                        if (response.isSuccessful) {
+                            status.text = "فایل با موفقیت آپلود شد."
+                            selectedFileUri = null
+                            selectedFileName = ""
+                            render()
+                        } else {
+                            status.text = "خطا در آپلود (${response.code}): $responseBody"
+                        }
+                    }
+                }
+
+                tempFile.delete()
+            } catch (e: Exception) {
+                runOnUiThread {
+                    status.text = "خطا در آپلود: ${e.message}"
+                }
+            }
+        }.start()
+    }
+}
