@@ -23,16 +23,15 @@ android {
 
     signingConfigs {
         create("release") {
-            // These values come from environment variables (GitHub Secrets) or local properties
-            val keystorePath = System.getenv("KEYSTORE_PATH") ?: "../alzahra-release.keystore"
-            val storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "AlzahraUni2026!"
-            val keyAlias = System.getenv("KEY_ALIAS") ?: "alzahra"
-            val keyPassword = System.getenv("KEY_PASSWORD") ?: "AlzahraUni2026!"
+            val ksPath = System.getenv("KEYSTORE_PATH") ?: "../alzahra-release.keystore"
+            val ksPassword = System.getenv("KEYSTORE_PASSWORD") ?: "AlzahraUni2026!"
+            val ksAlias = System.getenv("KEY_ALIAS") ?: "alzahra"
+            val ksKeyPassword = System.getenv("KEY_PASSWORD") ?: "AlzahraUni2026!"
 
-            storeFile = file(keystorePath)
-            storePassword = storePassword
-            this.keyAlias = keyAlias
-            this.keyPassword = keyPassword
+            storeFile = file(ksPath)
+            storePassword = ksPassword
+            keyAlias = ksAlias
+            keyPassword = ksKeyPassword
         }
     }
 
